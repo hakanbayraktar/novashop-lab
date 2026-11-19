@@ -30,6 +30,7 @@ jobs:
     name: Build & Push (${{ matrix.service }})
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         service: [ui, catalog]
     steps:
@@ -55,7 +56,13 @@ jobs:
           SERVICE: ${{ matrix.service }}
         run: |
           IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${SERVICE}:${TAG}"
-          docker build -t "$IMAGE" "src/${SERVICE}"
+          # Bağımlılık indirmede geçici ağ hatalarına karşı 3 deneme
+          for i in 1 2 3; do
+            docker build -t "$IMAGE" "src/${SERVICE}" && break
+            [ "$i" -eq 3 ] && exit 1
+            echo "Build başarısız, yeniden deneniyor ($i/3)..."
+            sleep 15
+          done
           docker push "$IMAGE"
 
   deploy:
