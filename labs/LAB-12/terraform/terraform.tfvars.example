@@ -1,0 +1,7 @@
+project_id  = "my-gcp-project"
+github_repo = "my-github-user/novashop-lab"
+# region       = "europe-west1"
+# zone         = "europe-west1-b"
+# node_count   = 2
+# machine_type = "e2-medium"
+# spot         = true

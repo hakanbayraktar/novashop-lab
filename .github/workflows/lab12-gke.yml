@@ -1,0 +1,110 @@
+name: LAB-12 - NovaShop GKE Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'labs/LAB-12/k8s/**'
+      - 'src/ui/**'
+      - 'src/catalog/**'
+      - '.github/workflows/lab12-gke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: lab12-gke-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGION: ${{ vars.GCP_REGION }}
+  ZONE: ${{ vars.GCP_ZONE }}
+  CLUSTER: ${{ vars.GKE_CLUSTER }}
+  REPOSITORY: ${{ vars.GAR_REPOSITORY }}
+  TAG: ${{ github.sha }}
+
+jobs:
+  build-push:
+    name: Build & Push (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [ui, catalog]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Authenticate to Google Cloud (Workload Identity Federation)
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and push image
+        env:
+          PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          SERVICE: ${{ matrix.service }}
+        run: |
+          IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/${SERVICE}:${TAG}"
+          docker build -t "$IMAGE" "src/${SERVICE}"
+          docker push "$IMAGE"
+
+  deploy:
+    name: Deploy to GKE
+    needs: build-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Authenticate to Google Cloud (Workload Identity Federation)
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v3
+        with:
+          cluster_name: ${{ env.CLUSTER }}
+          location: ${{ env.ZONE }}
+
+      - name: Apply manifests
+        env:
+          PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        run: |
+          BASE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}"
+          kubectl apply -f labs/LAB-12/k8s/namespace.yaml
+          sed "s|CATALOG_IMAGE|${BASE}/catalog:${TAG}|" labs/LAB-12/k8s/catalog.yaml | kubectl apply -f -
+          sed "s|UI_IMAGE|${BASE}/ui:${TAG}|" labs/LAB-12/k8s/ui.yaml | kubectl apply -f -
+
+      - name: Wait for rollout
+        run: |
+          kubectl -n novashop rollout status deployment/catalog --timeout=180s
+          kubectl -n novashop rollout status deployment/ui --timeout=300s
+          kubectl -n novashop get pods -o wide
+
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 40); do
+            IP=$(kubectl -n novashop get svc ui -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            [ -n "$IP" ] && break
+            echo "LoadBalancer IP bekleniyor ($i/40)..."
+            sleep 10
+          done
+          [ -n "$IP" ] || { echo "LoadBalancer IP alınamadı"; exit 1; }
+          echo "UI adresi: http://${IP}"
+          curl -sf --retry 12 --retry-delay 10 --retry-all-errors "http://${IP}/actuator/health"
+          echo
+          curl -sf -o /dev/null -w "Ana sayfa HTTP %{http_code}\n" "http://${IP}/"
+          echo "### NovaShop UI: http://${IP}" >> "$GITHUB_STEP_SUMMARY"
