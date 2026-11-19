@@ -41,7 +41,9 @@ ingress:
   enabled: true
   # Traefik ingress controller'ı 01 workflow'u kurar
   className: traefik
-  annotations: {}
+  annotations:
+    # Varsayılan values.yaml'daki nginx annotation'ı kaldırılır (ingressClassName ile çakışır)
+    kubernetes.io/ingress.class: null
   hosts:
     - host: "novashop1.devopsatolyesi.com"
       paths:
