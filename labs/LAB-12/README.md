@@ -1,45 +1,10 @@
 # LAB-12 — Terraform ile GKE, GitHub Actions ile Deploy
 
-### Amaç
+## Amaç
 
-NovaShop altyapısını Google Cloud üzerinde Terraform ile kurmak (VPC, GKE cluster, Artifact Registry, Workload Identity Federation) ve GitHub Actions pipeline'ı ile `ui` ve `catalog` image'larını derleyip GKE'ye deploy etmek. Pipeline GCP'ye uzun ömürlü anahtar yerine GitHub OIDC token'ı ile bağlanır.
+NovaShop altyapısını Google Cloud üzerinde Terraform ile kurmak ve GitHub Actions pipeline'ı ile `ui` ve `catalog` image'larını derleyip GKE'ye deploy etmek. Pipeline GCP'ye uzun ömürlü anahtar yerine Workload Identity Federation ile bağlanır.
 
----
-
-### Mimari
-
-```mermaid
-graph LR
-    GH[GitHub Actions] -->|OIDC token| WIF[Workload Identity Federation]
-    WIF -->|service account| AR[Artifact Registry<br/>ui, catalog image]
-    WIF -->|kubectl apply| GKE[GKE cluster<br/>zonal, 2 x e2-medium spot]
-    AR -->|image pull| GKE
-    User([curl / tarayıcı]) -->|LoadBalancer :80| GKE
-```
-
----
-
-### Dizin yapısı
-
-```text
-labs/LAB-12/
-├── terraform/
-│   ├── versions.tf               # provider'lar ve GCS backend
-│   ├── main.tf                   # API'ler ve modül çağrıları
-│   ├── variables.tf / outputs.tf
-│   ├── terraform.tfvars.example
-│   └── modules/
-│       ├── network/              # VPC + subnet (pod ve service aralıkları)
-│       ├── gke/                  # zonal cluster + node pool + node service account
-│       ├── artifact-registry/    # Docker reposu
-│       └── iam-wif/              # Workload Identity pool, provider, deployer service account
-└── k8s/                          # namespace, catalog ve ui manifestleri
-.github/workflows/lab12-gke.yml   # build → push → deploy → smoke test
-```
-
----
-
-### Ön koşullar
+## Ön Koşullar
 
 - Billing açık bir GCP projesi ve bu projede `Owner` (veya eşdeğer) yetki.
 - Bu reponun kendi GitHub hesabınızdaki kopyası (fork) ve repoda Settings erişimi.
@@ -57,11 +22,45 @@ gcloud version && terraform version && kubectl version --client
 gcloud components install gke-gcloud-auth-plugin
 ```
 
----
+## Mimari ve Çalışma Modeli
 
-### Adımlar
+```mermaid
+graph LR
+    GH[GitHub Actions] -->|OIDC token| WIF[Workload Identity Federation]
+    WIF -->|service account| AR[Artifact Registry<br/>ui, catalog image]
+    WIF -->|kubectl apply| GKE[GKE cluster<br/>zonal, 2 x e2-medium spot]
+    AR -->|image pull| GKE
+    User([curl / tarayıcı]) -->|LoadBalancer :80| GKE
+```
 
-#### 1. GCP oturumu
+<details>
+<summary><strong>Dizin yapısı ve çalışma modeli</strong></summary>
+
+```text
+labs/LAB-12/
+├── terraform/
+│   ├── versions.tf               # provider'lar ve GCS backend
+│   ├── main.tf                   # API'ler ve modül çağrıları
+│   ├── variables.tf / outputs.tf
+│   ├── terraform.tfvars.example
+│   └── modules/
+│       ├── network/              # VPC + subnet (pod ve service aralıkları)
+│       ├── gke/                  # zonal cluster + node pool + node service account
+│       ├── artifact-registry/    # Docker reposu
+│       └── iam-wif/              # Workload Identity pool, provider, deployer service account
+└── k8s/                          # namespace, catalog ve ui manifestleri
+.github/workflows/lab12-gke.yml   # build → push → deploy → smoke test
+```
+
+- Terraform altyapıyı yerelden kurar; state GCS bucket'ında durur.
+- Pipeline GitHub'ın OIDC token'ını WIF üzerinden kısa ömürlü GCP kimliğine çevirir. WIF sadece `terraform.tfvars` içindeki `github_repo` reposundan gelen token'ları kabul eder.
+- Image'lar commit SHA'sı ile etiketlenip Artifact Registry'ye gönderilir, manifestlerdeki `UI_IMAGE` / `CATALOG_IMAGE` yerine bu etiket yazılarak GKE'ye uygulanır.
+
+</details>
+
+## Adım Adım Uygulama Rehberi
+
+### 1. GCP oturumu
 
 Hem `gcloud` hem Terraform için oturum açın:
 
@@ -76,9 +75,9 @@ gcloud auth application-default login
 gcloud config set project <PROJECT_ID>
 ```
 
-#### 2. Terraform state için GCS bucket
+### 2. Terraform state için GCS bucket
 
-State dosyası bu bucket'ta tutulur; bucket adı tüm GCS içinde benzersiz olmalıdır:
+State dosyası bu bucket'ta tutulur; bucket adı tüm GCS içinde benzersiz olmalıdır ([GCS backend](https://developer.hashicorp.com/terraform/language/backend/gcs)):
 
 ```bash
 gcloud storage buckets create gs://<PROJECT_ID>-tfstate --location europe-west1 --uniform-bucket-level-access
@@ -90,7 +89,7 @@ State dosyasının eski sürümleri saklansın diye versioning açın:
 gcloud storage buckets update gs://<PROJECT_ID>-tfstate --versioning
 ```
 
-#### 3. Değişken dosyası
+### 3. Değişken dosyası
 
 Örnek dosyayı kopyalayın:
 
@@ -99,38 +98,37 @@ cd labs/LAB-12/terraform
 cp terraform.tfvars.example terraform.tfvars
 ```
 
-`terraform.tfvars` içinde `project_id` ve `github_repo` değerlerini düzenleyin. `github_repo` pipeline'ın çalışacağı repodur (`kullanici/novashop-lab`); WIF sadece bu repodan gelen token'ları kabul eder.
+`terraform.tfvars` içinde `project_id` ve `github_repo` (`kullanici/novashop-lab`) değerlerini düzenleyin:
 
 ```hcl
 project_id  = "<PROJECT_ID>"
 github_repo = "<GITHUB_KULLANICI>/novashop-lab"
 ```
 
-#### 4. Terraform ile kurulum
+### 4. Terraform ile kurulum
 
-Provider'ları indirin ve backend'i bucket'a bağlayın:
+Kullanılan kaynaklar: [Google provider 8.12.0](https://registry.terraform.io/providers/hashicorp/google/8.12.0/docs) · [container_cluster](https://registry.terraform.io/providers/hashicorp/google/8.12.0/docs/resources/container_cluster) · [container_node_pool](https://registry.terraform.io/providers/hashicorp/google/8.12.0/docs/resources/container_node_pool) · [artifact_registry_repository](https://registry.terraform.io/providers/hashicorp/google/8.12.0/docs/resources/artifact_registry_repository) · [iam_workload_identity_pool_provider](https://registry.terraform.io/providers/hashicorp/google/8.12.0/docs/resources/iam_workload_identity_pool_provider)
+
+Provider'ları indirin ve backend'i bucket'a bağlayın (*beklenen:* `Terraform has been successfully initialized!`):
 
 ```bash
 terraform init -backend-config="bucket=<PROJECT_ID>-tfstate"
 ```
 
-*Beklenen çıktı:* `Terraform has been successfully initialized!`
-
-Oluşturulacak kaynakları listeleyin:
+Oluşturulacak kaynakları listeleyin (*beklenen:* `Plan: 25 to add, 0 to change, 0 to destroy.`):
 
 ```bash
 terraform plan -out=tfplan
 ```
 
-*Beklenen çıktı:* `Plan: 25 to add, 0 to change, 0 to destroy.`
-
-Kaynakları oluşturun (GKE cluster ile birlikte yaklaşık 10 dakika):
+Kaynakları oluşturun; GKE cluster ile birlikte yaklaşık 10 dakika sürer:
 
 ```bash
 terraform apply tfplan
 ```
 
-*Beklenen çıktı:*
+<details>
+<summary><strong>Beklenen çıktı</strong></summary>
 
 ```text
 Apply complete! Resources: 25 added, 0 changed, 0 destroyed.
@@ -147,17 +145,17 @@ workload_identity_provider = "projects/<PROJECT_NUMBER>/locations/global/workloa
 zone = "europe-west1-b"
 ```
 
-Kodla canlı altyapının aynı olduğunu kontrol edin; ikinci plan değişiklik göstermemelidir:
+</details>
+
+Kodla canlı altyapının aynı olduğunu kontrol edin (*beklenen:* `No changes. Your infrastructure matches the configuration.`):
 
 ```bash
 terraform plan
 ```
 
-*Beklenen çıktı:* `No changes. Your infrastructure matches the configuration.`
+### 5. GitHub Secrets ve Variables
 
-#### 5. GitHub Secrets ve Variables
-
-Pipeline'ın ihtiyaç duyduğu değerler Terraform çıktılarından alınır:
+Değerler Terraform çıktılarından alınır ([GitHub Actions secrets](https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions)):
 
 | Ad | Tür | Değeri veren komut |
 |---|---|---|
@@ -169,14 +167,15 @@ Pipeline'ın ihtiyaç duyduğu değerler Terraform çıktılarından alınır:
 | `GKE_CLUSTER` | Variable | `terraform output -raw cluster_name` |
 | `GAR_REPOSITORY` | Variable | `terraform output -raw artifact_repository` |
 
-GitHub arayüzünden girmek için:
-
 1. GitHub'da reponuzu açın, üst menüden **Settings**'e tıklayın.
 2. Sol menüde **Secrets and variables > Actions**'ı açın.
-3. **Secrets** sekmesinde **New repository secret**'a tıklayın. **Name** alanına tablodaki adı (ör. `GCP_PROJECT_ID`), **Secret** alanına ilgili `terraform output -raw ...` komutunun çıktısını yapıştırıp **Add secret** ile kaydedin. Üç secret için tekrarlayın.
-4. **Variables** sekmesine geçin, **New repository variable**'a tıklayın. **Name** ve **Value** alanlarını tablodaki gibi doldurup **Add variable** ile kaydedin. Dört variable için tekrarlayın.
+3. **Secrets** sekmesinde **New repository secret**: **Name** = tablodaki ad, **Secret** = ilgili komutun çıktısı, **Add secret**. Üç secret için tekrarlayın.
+4. **Variables** sekmesinde **New repository variable**: **Name** ve **Value** tablodaki gibi, **Add variable**. Dört variable için tekrarlayın.
 
-Aynı işlemi `gh` CLI ile yapmak için (`terraform/` dizininde, `<REPO>` = `kullanici/novashop-lab`). Değerler ekrana yazılmadan doğrudan GitHub'a gönderilir:
+<details>
+<summary><strong>Aynı işlem gh CLI ile</strong></summary>
+
+`terraform/` dizininde çalıştırın (`<REPO>` = `kullanici/novashop-lab`); değerler ekrana yazılmadan GitHub'a gönderilir:
 
 ```bash
 terraform output -raw project_id                 | gh secret set GCP_PROJECT_ID -R <REPO>
@@ -194,9 +193,11 @@ Girilen adları kontrol edin (değerler gösterilmez):
 gh secret list -R <REPO> && gh variable list -R <REPO>
 ```
 
-#### 6. Pipeline'ı çalıştırma
+</details>
 
-Pipeline `main` dalına `labs/LAB-12/k8s/`, `src/ui/`, `src/catalog/` veya workflow dosyasında değişiklik push edildiğinde kendiliğinden başlar. Elle başlatmak için GitHub'da **Actions > LAB-12 - NovaShop GKE Deploy > Run workflow**'a tıklayın ya da:
+### 6. Pipeline'ı çalıştırma
+
+Pipeline `main` dalına `labs/LAB-12/k8s/`, `src/ui/`, `src/catalog/` veya workflow dosyasında değişiklik push edildiğinde başlar. Elle başlatmak için **Actions > LAB-12 - NovaShop GKE Deploy > Run workflow** ya da ([auth](https://github.com/google-github-actions/auth), [get-gke-credentials](https://github.com/google-github-actions/get-gke-credentials) action'ları kullanılır):
 
 ```bash
 gh workflow run lab12-gke.yml -R <REPO>
@@ -216,7 +217,7 @@ UI adresi: http://<EXTERNAL_IP>
 Ana sayfa HTTP 200
 ```
 
-#### 7. Doğrulama
+### 7. Doğrulama
 
 `kubectl`'i cluster'a bağlayın:
 
@@ -224,13 +225,14 @@ Ana sayfa HTTP 200
 gcloud container clusters get-credentials novashop-gke --zone europe-west1-b
 ```
 
-Node'ların hazır olduğunu kontrol edin:
+Node'ların `Ready` olduğunu kontrol edin:
 
 ```bash
 kubectl get nodes
 ```
 
-*Beklenen çıktı:*
+<details>
+<summary><strong>Beklenen çıktı</strong></summary>
 
 ```text
 NAME                                           STATUS   ROLES    AGE   VERSION
@@ -238,13 +240,16 @@ gke-novashop-gke-novashop-pool-xxxxxxxx-xxxx   Ready    <none>   7m    v1.36.4-g
 gke-novashop-gke-novashop-pool-xxxxxxxx-xxxx   Ready    <none>   7m    v1.36.4-gke.2377000
 ```
 
-Pod'ları ve servisleri listeleyin; `ui` servisinin `EXTERNAL-IP` değeri uygulamanın adresidir:
+</details>
+
+Pod'ları ve servisleri listeleyin; pod'lar `Running`, `ui` servisinin `EXTERNAL-IP` değeri uygulamanın adresidir:
 
 ```bash
 kubectl -n novashop get pods,svc
 ```
 
-*Beklenen çıktı:*
+<details>
+<summary><strong>Beklenen çıktı</strong></summary>
 
 ```text
 NAME                           READY   STATUS    RESTARTS   AGE
@@ -256,65 +261,43 @@ service/catalog   ClusterIP      10.30.x.x      <none>          80/TCP         9
 service/ui        LoadBalancer   10.30.x.x      <EXTERNAL_IP>   80:3xxxx/TCP   88s
 ```
 
-Uygulamanın sağlık durumunu dışarıdan sorgulayın:
+</details>
+
+Uygulamanın sağlık durumunu dışarıdan sorgulayın (*beklenen:* `{"status":"UP","groups":["liveness","readiness"]}`):
 
 ```bash
 IP=$(kubectl -n novashop get svc ui -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
 curl -s http://$IP/actuator/health
 ```
 
-*Beklenen çıktı:* `{"status":"UP","groups":["liveness","readiness"]}`
-
-Katalog sayfasının `catalog` servisinden ürün getirdiğini kontrol edin (ürün linki sayısı):
+Katalog sayfasının `catalog` servisinden ürün getirdiğini kontrol edin (*beklenen:* `0`'dan büyük bir sayı, ör. `6`). Tarayıcıda `http://<EXTERNAL_IP>` adresinden mağaza açılır:
 
 ```bash
 curl -s "http://$IP/catalog?page=1" | grep -c 'href="/catalog/'
 ```
 
-*Beklenen çıktı:* `0`'dan büyük bir sayı (ör. `6`). Tarayıcıda `http://<EXTERNAL_IP>` adresini açarak da mağazayı görebilirsiniz.
-
-Image'ların Artifact Registry'ye gittiğini kontrol edin:
+Image'ların Artifact Registry'ye gittiğini kontrol edin (*beklenen:* `.../novashop/ui` ve `.../novashop/catalog` satırları):
 
 ```bash
 gcloud artifacts docker images list europe-west1-docker.pkg.dev/<PROJECT_ID>/novashop
 ```
 
-*Beklenen çıktı:* `.../novashop/ui` ve `.../novashop/catalog` satırları.
+## Temizlik
 
----
-
-### Temizlik
-
-Önce LoadBalancer'ı silmek için uygulama namespace'ini kaldırın (Terraform dışında oluşan load balancer kaynağı kalmasın):
+Önce uygulama namespace'ini silin; böylece Terraform dışında oluşan LoadBalancer da kalkar:
 
 ```bash
 kubectl delete namespace novashop
 ```
 
-Terraform ile oluşturulan tüm kaynakları silin (`terraform/` dizininde):
+Terraform ile oluşturulan tüm kaynakları silin (`terraform/` dizininde, *beklenen:* `Destroy complete! Resources: 25 destroyed.`):
 
 ```bash
 terraform destroy
 ```
-
-*Beklenen çıktı:* `Destroy complete! Resources: 25 destroyed.`
 
 State bucket'ını da silmek isterseniz:
 
 ```bash
 gcloud storage rm --recursive gs://<PROJECT_ID>-tfstate
 ```
-
----
-
-### Resmi dokümantasyon
-
-- Terraform Google provider 8.12.0: https://registry.terraform.io/providers/hashicorp/google/8.12.0/docs
-- `google_container_cluster`: https://registry.terraform.io/providers/hashicorp/google/8.12.0/docs/resources/container_cluster
-- `google_container_node_pool`: https://registry.terraform.io/providers/hashicorp/google/8.12.0/docs/resources/container_node_pool
-- `google_artifact_registry_repository`: https://registry.terraform.io/providers/hashicorp/google/8.12.0/docs/resources/artifact_registry_repository
-- `google_iam_workload_identity_pool_provider`: https://registry.terraform.io/providers/hashicorp/google/8.12.0/docs/resources/iam_workload_identity_pool_provider
-- GCS backend: https://developer.hashicorp.com/terraform/language/backend/gcs
-- google-github-actions/auth: https://github.com/google-github-actions/auth
-- google-github-actions/get-gke-credentials: https://github.com/google-github-actions/get-gke-credentials
-- GitHub Actions secrets: https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions

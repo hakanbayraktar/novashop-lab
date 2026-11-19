@@ -2,7 +2,7 @@
 # NovaShop — LAB-12 Terraform IaC Doğrulama Betiği
 set -e
 
-TF_DIR="${1:-terraform}"
+TF_DIR="${1:-labs/LAB-12/terraform}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 echo "=== [LAB-12] Terraform IaC Doğrulama Başlatılıyor ==="
