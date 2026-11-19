@@ -1,45 +1,46 @@
 variable "project_id" {
-  description = "GCP proje ID'si"
+  description = "GCP proje ID'si."
   type        = string
 }
 
 variable "region" {
-  description = "Artifact Registry ve subnet bölgesi"
+  description = "Subnet ve Artifact Registry bölgesi."
   type        = string
   default     = "europe-west1"
 }
 
 variable "zone" {
-  description = "Zonal GKE cluster'ın zone'u"
+  description = "Zonal GKE cluster'ın zone'u."
   type        = string
   default     = "europe-west1-b"
 }
 
-variable "name" {
-  description = "Tüm kaynakların ön eki"
+variable "project" {
+  description = "Kaynak adlarında kullanılan kısa proje adı."
   type        = string
   default     = "novashop"
 }
 
-variable "github_repo" {
-  description = "Pipeline'ın çalışacağı GitHub reposu (sahip/repo)"
+variable "environment" {
+  description = "Ortam adı."
   type        = string
+  default     = "training"
+}
+
+variable "node_machine_type" {
+  description = "Node makine tipi. ELK ve Prometheus için node başına 8 GB bellek."
+  type        = string
+  default     = "e2-standard-2"
 }
 
 variable "node_count" {
-  description = "Node sayısı"
+  description = "Node sayısı. Elasticsearch ve Kibana ayrı node'lara yerleştiği için en az 2."
   type        = number
   default     = 2
 }
 
-variable "machine_type" {
-  description = "Node makine tipi"
-  type        = string
-  default     = "e2-medium"
-}
-
 variable "spot" {
-  description = "Spot (ucuz, kesintiye uğrayabilir) node kullan"
+  description = "Spot (ucuz, kesintiye uğrayabilir) node kullan."
   type        = bool
   default     = true
 }

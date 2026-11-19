@@ -1,0 +1,105 @@
+name: "LAB-12 - 02 NovaShop GKE Uygulama Dağıtımı"
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: lab12-gke-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: gke-training
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ vars.GCP_REGION }}
+      GCP_ZONE: ${{ vars.GCP_ZONE }}
+      CLUSTER_NAME: ${{ vars.GKE_CLUSTER_NAME || 'novashop-training-gke' }}
+      GAR_REPOSITORY: novashop
+      IMAGE_NAME: novashop-ui
+      APP_HOST: novashop.${{ vars.BASE_DOMAIN || 'devopsatolyesi.com' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - name: Birim testleri
+        working-directory: src/ui
+        run: ./mvnw test -B
+      - name: GCP kimlik doğrulaması (Workload Identity Federation)
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      - name: gcloud kur
+        uses: google-github-actions/setup-gcloud@v3
+      - name: Artifact Registry girişi
+        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+      - name: UI image derle ve Artifact Registry'ye gönder
+        env:
+          IMAGE_TAG: sha-${{ github.sha }}
+        run: |
+          IMAGE="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/${IMAGE_NAME}"
+          docker build --file src/ui/Dockerfile --tag "$IMAGE:$IMAGE_TAG" src/ui
+          docker push "$IMAGE:$IMAGE_TAG"
+      - name: kubectl ve Helm kur
+        uses: azure/setup-helm@v5
+      - name: GKE kubeconfig oluştur
+        uses: google-github-actions/get-gke-credentials@v3
+        with:
+          cluster_name: ${{ env.CLUSTER_NAME }}
+          location: ${{ env.GCP_ZONE }}
+      - name: Traefik ingress controller kontrol et / kur
+        run: |
+          if ! helm status traefik -n traefik >/dev/null 2>&1; then
+            echo "Traefik bulunamadı, kuruluyor..."
+            helm repo add traefik https://traefik.github.io/charts
+            helm repo update
+            helm upgrade --install traefik traefik/traefik \
+              --namespace traefik --create-namespace \
+              --version 42.4.1 \
+              --set service.type=LoadBalancer \
+              --set providers.kubernetesIngress.publishedService.enabled=true \
+              --wait --timeout 5m
+          else
+            echo "Traefik zaten kurulu ve çalışıyor."
+          fi
+      - name: Helm ile dağıt
+        env:
+          IMAGE_TAG: sha-${{ github.sha }}
+        run: |
+          helm upgrade --install novashop charts/novashop \
+            --namespace novashop --create-namespace \
+            --values labs/LAB-12/helm/values-gke.yaml \
+            --set ingress.hosts[0].host="$APP_HOST" \
+            --set ui.image.repository="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/${GAR_REPOSITORY}/${IMAGE_NAME}" \
+            --set ui.image.tag="$IMAGE_TAG" \
+            --wait --timeout 10m
+      - name: Load balancer adresini doğrula (smoke test)
+        run: |
+          for attempt in {1..30}; do
+            LB_IP=$(kubectl get ingress novashop-ingress -n novashop \
+              -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+            if [ -n "$LB_IP" ]; then
+              if curl -fsS --retry 3 -H "Host: $APP_HOST" "http://$LB_IP/actuator/health"; then
+                echo
+                curl -fsS -o /dev/null -w "Ana sayfa HTTP %{http_code}\n" -H "Host: $APP_HOST" "http://$LB_IP/"
+                echo "LB_URL=http://$LB_IP" >> "$GITHUB_STEP_SUMMARY"
+                echo "Uygulama başarıyla erişilebilir: http://$LB_IP (Host: $APP_HOST)"
+                exit 0
+              fi
+            fi
+            echo "Load balancer henüz hazır değil, bekleniyor ($attempt/30)..."
+            sleep 10
+          done
+          echo "Load balancer adresi zamanında atanmadı veya erişilemedi." >&2
+          kubectl get pods,svc,ingress -n novashop
+          exit 1

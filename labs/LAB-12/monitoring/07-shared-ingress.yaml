@@ -1,0 +1,49 @@
+# GKE: tüm araçlar Traefik'in tek LoadBalancer IP'si arkasında host bazlı yönlendirilir
+# (EKS'teki alb.ingress.kubernetes.io/group.name: devopsatolyesi-shared karşılığı)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: elk-ingress
+  namespace: logging
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: elk.devopsatolyesi.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kibana
+                port:
+                  number: 5601
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: monitoring-ingress
+  namespace: monitoring
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: grafana.devopsatolyesi.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  number: 80
+    - host: prometheus.devopsatolyesi.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: prometheus
+                port:
+                  number: 9090
