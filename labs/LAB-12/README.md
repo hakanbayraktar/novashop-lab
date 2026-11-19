@@ -205,7 +205,7 @@ gh variable set BASE_DOMAIN      -R "$REPO" --body "devopsatolyesi.com"
 gh workflow run lab12-bootstrap.yml -R "$REPO" -f action=apply
 ```
 
-Koşuyu takip edin (yaklaşık 2 dakika); yeşil bitmelidir:
+Koşuyu takip edin (yaklaşık 5 dakika; son adım yeni IAM yetkilerinin yayılması için 3 dakika bekler); yeşil bitmelidir:
 
 ```bash
 gh run watch -R "$REPO" $(gh run list -R "$REPO" -w lab12-bootstrap.yml -L 1 --json databaseId --jq '.[0].databaseId')
@@ -230,6 +230,7 @@ gh secret list -R "$REPO" && gh variable list -R "$REPO"
 | Terraform state bucket'ı | `<PROJE_ID>-tfstate` bucket'ı (versioning açık, public erişim kapalı) |
 | Service account ve roller | `novashop-github` service account'u ve aşağıdaki roller |
 | Workload Identity pool ve provider | `github-pool` ve GitHub OIDC provider'ı; yalnızca bu reponun token'larını kabul eder |
+| IAM yetkilerinin yayılmasını bekle | Yeni rol bağlarının Google tarafında etkinleşmesi için 3 dakika bekler |
 | Sonuçları GitHub'a yaz | `gh secret set` / `gh variable set` ile üç değeri repoya yazar |
 
 | Rol | Neden |

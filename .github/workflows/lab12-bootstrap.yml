@@ -133,6 +133,11 @@ jobs:
             --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.repository/${REPO}" >/dev/null
           echo "WIF hazır."
 
+      # Yeni IAM bağlarının Google tarafında yayılması birkaç dakika sürer; 01 hemen çalıştırılırsa 403 alınır
+      - name: IAM yetkilerinin yayılmasını bekle
+        if: inputs.action == 'apply'
+        run: sleep 180
+
       - name: Sonuçları GitHub secret ve variable olarak yaz
         if: inputs.action == 'apply'
         run: |
