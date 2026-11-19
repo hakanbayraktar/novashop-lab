@@ -42,16 +42,21 @@ jobs:
       - name: gcloud kur
         uses: google-github-actions/setup-gcloud@v3
 
-      - name: Ön tanımları kontrol et
+      - name: Ön tanımları kontrol et ve GCP token'ı al
         env:
-          BOOTSTRAP_TOKEN: ${{ secrets.GCP_BOOTSTRAP_TOKEN }}
+          BOOTSTRAP_CREDENTIALS: ${{ secrets.GCP_BOOTSTRAP_CREDENTIALS }}
         run: |
-          [ -n "$PROJECT_ID" ]      || { echo "::error::GCP_PROJECT_ID variable'ı tanımlı değil."; exit 1; }
-          [ -n "$BOOTSTRAP_TOKEN" ] || { echo "::error::GCP_BOOTSTRAP_TOKEN secret'ı tanımlı değil."; exit 1; }
-          [ -n "$GH_TOKEN" ]        || { echo "::error::GH_PAT secret'ı tanımlı değil."; exit 1; }
-          # Token dosyaya yazılır; gcloud tüm komutlarda bu kimliği kullanır
+          [ -n "$PROJECT_ID" ]            || { echo "::error::GCP_PROJECT_ID variable'ı tanımlı değil."; exit 1; }
+          [ -n "$BOOTSTRAP_CREDENTIALS" ] || { echo "::error::GCP_BOOTSTRAP_CREDENTIALS secret'ı tanımlı değil."; exit 1; }
+          [ -n "$GH_TOKEN" ]              || { echo "::error::GH_PAT secret'ı tanımlı değil."; exit 1; }
+          # application_default_credentials.json içindeki refresh token ile her koşuda taze access token alınır
+          RESPONSE=$(echo "$BOOTSTRAP_CREDENTIALS" | jq -c '{client_id, client_secret, refresh_token, grant_type: "refresh_token"}' \
+            | curl -s -X POST https://oauth2.googleapis.com/token -H "Content-Type: application/json" -d @-)
+          ACCESS_TOKEN=$(echo "$RESPONSE" | jq -r '.access_token // empty')
+          [ -n "$ACCESS_TOKEN" ] || { echo "::error::GCP token alınamadı: $(echo "$RESPONSE" | jq -r '.error_description // .error')"; exit 1; }
+          echo "::add-mask::$ACCESS_TOKEN"
           TOKEN_FILE="$RUNNER_TEMP/gcp-token"
-          printf '%s' "$BOOTSTRAP_TOKEN" > "$TOKEN_FILE"
+          printf '%s' "$ACCESS_TOKEN" > "$TOKEN_FILE"
           echo "CLOUDSDK_AUTH_ACCESS_TOKEN_FILE=$TOKEN_FILE" >> "$GITHUB_ENV"
           echo "CLOUDSDK_CORE_PROJECT=$PROJECT_ID" >> "$GITHUB_ENV"
           echo "TF_STATE_BUCKET=${PROJECT_ID}-tfstate" >> "$GITHUB_ENV"
@@ -60,7 +65,7 @@ jobs:
       - name: GCP erişimini doğrula
         run: |
           gcloud projects describe "$PROJECT_ID" --format='value(projectId)' >/dev/null \
-            || { echo "::error::GCP'ye erişilemedi. GCP_BOOTSTRAP_TOKEN süresi dolmuş olabilir (1 saat); yenileyip tekrar deneyin."; exit 1; }
+            || { echo "::error::GCP'ye erişilemedi. GCP_BOOTSTRAP_CREDENTIALS hesabının projede Owner yetkisi olmalı."; exit 1; }
           echo "PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')" >> "$GITHUB_ENV"
           echo "GCP erişimi doğrulandı."
 

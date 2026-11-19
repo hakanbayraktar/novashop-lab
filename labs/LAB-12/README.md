@@ -35,7 +35,7 @@ flowchart LR
     U(["Tarayıcı / curl"]) -->|Cloudflare DNS| LB["Traefik LoadBalancer IP"] --> GKE
 ```
 
-- **00 Bootstrap** bir kere çalışır: API'leri açar, Terraform state bucket'ını, GitHub Actions service account'unu ve WIF'i oluşturur, bulduğu değerleri `gh` ile repoya secret/variable olarak yazar. Bu adım sizin kısa ömürlü GCP token'ınızla çalışır; sonraki workflow'lar anahtarsız WIF kullanır.
+- **00 Bootstrap** bir kere çalışır: API'leri açar, Terraform state bucket'ını, GitHub Actions service account'unu ve WIF'i oluşturur, bulduğu değerleri `gh` ile repoya secret/variable olarak yazar. Bu adım sizin GCP kimliğinizle (`GCP_BOOTSTRAP_CREDENTIALS`) çalışır; sonraki workflow'lar anahtarsız WIF kullanır.
 - **01, 02, 03** altyapıyı, uygulamayı ve monitoring'i kurar. İş bitince **01 destroy** altyapıyı, isterseniz **00 destroy** hazırlık kaynaklarını siler.
 
 <details>
@@ -110,7 +110,7 @@ Reponuzda **Settings > Secrets and variables > Actions** sayfasında girilir. Se
 
 | Tür | Ad | Ne | Nasıl alınır | Örnek |
 |---|---|---|---|---|
-| Secret | `GCP_BOOTSTRAP_TOKEN` | Bootstrap'in GCP'ye bağlanması için kısa ömürlü token (1 saat geçerli) | Yerelde `gcloud auth login`, ardından `gcloud auth print-access-token` çıktısı | `ya29.a0AfB...` |
+| Secret | `GCP_BOOTSTRAP_CREDENTIALS` | Bootstrap'in GCP'ye bağlanması için kimlik dosyası. İçindeki refresh token ile her koşuda yeni token alınır; süresi dolmaz, iptal edilene kadar geçerlidir | Yerelde `gcloud auth application-default login`, ardından `~/.config/gcloud/application_default_credentials.json` dosyasının tüm içeriği | `{"client_id": "....apps.googleusercontent.com", "client_secret": "...", "refresh_token": "1//0...", "type": "authorized_user"}` |
 | Secret | `GH_PAT` | Bootstrap'in sonuçları repoya secret/variable olarak yazabilmesi için GitHub token'ı | GitHub > Settings > Developer settings > Personal access tokens > Fine-grained tokens > Generate new token. Repository access: bu repo. Permissions: **Secrets** ve **Variables** = Read and write | `github_pat_11A...` |
 | Variable | `GCP_PROJECT_ID` | GCP proje ID'si | Console'da üstteki proje seçici > ID sütunu | `my-project-123456` |
 
@@ -141,11 +141,11 @@ Aynı değerleri `gh` CLI ile de girebilirsiniz. Komutları çalıştıracağın
 REPO=<GITHUB_KULLANICI>/<REPO>
 ```
 
-GCP token'ını alıp secret olarak girin (değer ekrana yazılmaz):
+GCP kimlik dosyasını oluşturup secret olarak girin (tarayıcıda Owner yetkili hesapla giriş yapın; değer ekrana yazılmaz):
 
 ```bash
-gcloud auth login
-gcloud auth print-access-token | gh secret set GCP_BOOTSTRAP_TOKEN -R "$REPO"
+gcloud auth application-default login
+gh secret set GCP_BOOTSTRAP_CREDENTIALS -R "$REPO" < ~/.config/gcloud/application_default_credentials.json
 ```
 
 GitHub token'ını girin (komut değeri sorar, yapıştırıp Enter'a basın):
@@ -203,7 +203,7 @@ gh secret list -R "$REPO" && gh variable list -R "$REPO"
 
 | Adım | Ne yapar |
 |---|---|
-| Ön tanımları kontrol et | `GCP_PROJECT_ID`, `GCP_BOOTSTRAP_TOKEN`, `GH_PAT` tanımlı mı bakar; token'ı gcloud'a verir |
+| Ön tanımları kontrol et ve GCP token'ı al | `GCP_PROJECT_ID`, `GCP_BOOTSTRAP_CREDENTIALS`, `GH_PAT` tanımlı mı bakar; refresh token ile yeni access token alıp gcloud'a verir |
 | GCP erişimini doğrula | Token geçerli mi, projeye erişiliyor mu kontrol eder |
 | API'leri aç | compute, container, artifactregistry, iam, iamcredentials, sts, cloudresourcemanager, storage |
 | Terraform state bucket'ı | `<PROJE_ID>-tfstate` bucket'ı (versioning açık, public erişim kapalı) |
@@ -436,11 +436,17 @@ gh run watch -R "$REPO" $(gh run list -R "$REPO" -w lab12-infra.yml -L 1 --json 
 gcloud container clusters list
 ```
 
-Lab'ı tamamen bitirdiyseniz hazırlık kaynaklarını (service account, WIF pool, state bucket ve bootstrap'in yazdığı secret'lar) da silin. `GCP_BOOTSTRAP_TOKEN` süresi dolduysa önce yenileyin:
+Lab'ı tamamen bitirdiyseniz hazırlık kaynaklarını (service account, WIF pool, state bucket ve bootstrap'in yazdığı secret'lar) da silin:
 
 ```bash
-gcloud auth print-access-token | gh secret set GCP_BOOTSTRAP_TOKEN -R "$REPO"
 gh workflow run lab12-bootstrap.yml -R "$REPO" -f action=destroy
+```
+
+Son olarak bootstrap kimliğini GitHub'dan silin ve Google tarafında iptal edin:
+
+```bash
+gh secret delete GCP_BOOTSTRAP_CREDENTIALS -R "$REPO"
+gcloud auth application-default revoke
 ```
 
 Silinen WIF pool'u 30 gün boyunca `DELETED` durumunda kalır; bu süre içinde bootstrap tekrar çalıştırılırsa pool geri alınarak kullanılır.
