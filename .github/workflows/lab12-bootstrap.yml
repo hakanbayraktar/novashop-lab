@@ -22,7 +22,7 @@ jobs:
     name: Bootstrap ${{ inputs.action }}
     runs-on: ubuntu-latest
     env:
-      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID }}
       REGION: ${{ vars.GCP_REGION || 'europe-west1' }}
       ZONE: ${{ vars.GCP_ZONE || 'europe-west1-b' }}
       CLUSTER_NAME: ${{ vars.GKE_CLUSTER_NAME || 'novashop-training-gke' }}

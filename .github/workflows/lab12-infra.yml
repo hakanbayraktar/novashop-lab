@@ -28,7 +28,7 @@ jobs:
         working-directory: labs/LAB-12/terraform
     env:
       TF_IN_AUTOMATION: "true"
-      TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID }}
+      TF_VAR_project_id: ${{ vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID }}
       TF_VAR_region: ${{ vars.GCP_REGION || 'europe-west1' }}
       TF_VAR_zone: ${{ vars.GCP_ZONE || 'europe-west1-b' }}
       CLUSTER_NAME: ${{ vars.GKE_CLUSTER_NAME || 'novashop-training-gke' }}
@@ -41,7 +41,7 @@ jobs:
       - name: GCP kimlik doğrulaması (Workload Identity Federation)
         uses: google-github-actions/auth@v3
         with:
-          project_id: ${{ vars.GCP_PROJECT_ID }}
+          project_id: ${{ vars.GCP_PROJECT_ID || secrets.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
       - name: gcloud kur

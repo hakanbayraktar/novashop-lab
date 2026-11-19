@@ -112,7 +112,7 @@ Reponuzda **Settings > Secrets and variables > Actions** sayfasında girilir. Se
 |---|---|---|---|---|
 | Secret | `GCP_BOOTSTRAP_CREDENTIALS` | Bootstrap'in GCP'ye bağlanması için kimlik dosyası. İçindeki refresh token ile her koşuda yeni token alınır; süresi dolmaz, iptal edilene kadar geçerlidir | Yerelde `gcloud auth application-default login`, ardından `~/.config/gcloud/application_default_credentials.json` dosyasının tüm içeriği | `{"client_id": "....apps.googleusercontent.com", "client_secret": "...", "refresh_token": "1//0...", "type": "authorized_user"}` |
 | Secret | `GH_PAT` | Bootstrap'in sonuçları repoya secret/variable olarak yazabilmesi için GitHub token'ı | GitHub > Settings > Developer settings > Personal access tokens > Fine-grained tokens > Generate new token. Repository access: bu repo. Permissions: **Secrets** ve **Variables** = Read and write | `github_pat_11A...` |
-| Variable | `GCP_PROJECT_ID` | GCP proje ID'si | Console'da üstteki proje seçici > ID sütunu | `my-project-123456` |
+| Variable (veya Secret) | `GCP_PROJECT_ID` | GCP proje ID'si; secret olarak girilirse loglarda maskelenir | Console'da üstteki proje seçici > ID sütunu | `my-project-123456` |
 
 #### 1.2 İsteğe bağlı olanlar
 
