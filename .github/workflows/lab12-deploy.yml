@@ -17,8 +17,8 @@ jobs:
     environment: gke-training
     env:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-      GCP_REGION: ${{ vars.GCP_REGION }}
-      GCP_ZONE: ${{ vars.GCP_ZONE }}
+      GCP_REGION: ${{ vars.GCP_REGION || 'europe-west1' }}
+      GCP_ZONE: ${{ vars.GCP_ZONE || 'europe-west1-b' }}
       CLUSTER_NAME: ${{ vars.GKE_CLUSTER_NAME || 'novashop-training-gke' }}
       GAR_REPOSITORY: novashop
       IMAGE_NAME: novashop-ui

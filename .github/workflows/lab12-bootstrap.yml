@@ -1,0 +1,170 @@
+name: "LAB-12 - 00 GCP Hazırlık (Bootstrap)"
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "apply: GCP'yi hazırla ve GitHub secret'larını yaz / destroy: hazırlık kaynaklarını sil"
+        type: choice
+        required: true
+        default: apply
+        options: [apply, destroy]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lab12-gcp-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap:
+    name: Bootstrap ${{ inputs.action }}
+    runs-on: ubuntu-latest
+    env:
+      PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      REGION: ${{ vars.GCP_REGION || 'europe-west1' }}
+      ZONE: ${{ vars.GCP_ZONE || 'europe-west1-b' }}
+      CLUSTER_NAME: ${{ vars.GKE_CLUSTER_NAME || 'novashop-training-gke' }}
+      REPO: ${{ github.repository }}
+      SA_NAME: novashop-github
+      POOL_ID: github-pool
+      PROVIDER_ID: github-provider
+      GH_TOKEN: ${{ secrets.GH_PAT }}
+      ROLES: >-
+        roles/container.admin
+        roles/compute.networkAdmin
+        roles/artifactregistry.admin
+        roles/iam.serviceAccountAdmin
+        roles/iam.serviceAccountUser
+        roles/resourcemanager.projectIamAdmin
+    steps:
+      - name: gcloud kur
+        uses: google-github-actions/setup-gcloud@v3
+
+      - name: Ön tanımları kontrol et
+        env:
+          BOOTSTRAP_TOKEN: ${{ secrets.GCP_BOOTSTRAP_TOKEN }}
+        run: |
+          [ -n "$PROJECT_ID" ]      || { echo "::error::GCP_PROJECT_ID variable'ı tanımlı değil."; exit 1; }
+          [ -n "$BOOTSTRAP_TOKEN" ] || { echo "::error::GCP_BOOTSTRAP_TOKEN secret'ı tanımlı değil."; exit 1; }
+          [ -n "$GH_TOKEN" ]        || { echo "::error::GH_PAT secret'ı tanımlı değil."; exit 1; }
+          # Token dosyaya yazılır; gcloud tüm komutlarda bu kimliği kullanır
+          TOKEN_FILE="$RUNNER_TEMP/gcp-token"
+          printf '%s' "$BOOTSTRAP_TOKEN" > "$TOKEN_FILE"
+          echo "CLOUDSDK_AUTH_ACCESS_TOKEN_FILE=$TOKEN_FILE" >> "$GITHUB_ENV"
+          echo "CLOUDSDK_CORE_PROJECT=$PROJECT_ID" >> "$GITHUB_ENV"
+          echo "TF_STATE_BUCKET=${PROJECT_ID}-tfstate" >> "$GITHUB_ENV"
+          echo "SA_EMAIL=${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com" >> "$GITHUB_ENV"
+
+      - name: GCP erişimini doğrula
+        run: |
+          gcloud projects describe "$PROJECT_ID" --format='value(projectId)' >/dev/null \
+            || { echo "::error::GCP'ye erişilemedi. GCP_BOOTSTRAP_TOKEN süresi dolmuş olabilir (1 saat); yenileyip tekrar deneyin."; exit 1; }
+          echo "PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')" >> "$GITHUB_ENV"
+          echo "GCP erişimi doğrulandı."
+
+      # ---------------- apply ----------------
+      - name: API'leri aç
+        if: inputs.action == 'apply'
+        run: |
+          gcloud services enable compute.googleapis.com container.googleapis.com \
+            artifactregistry.googleapis.com iam.googleapis.com iamcredentials.googleapis.com \
+            sts.googleapis.com cloudresourcemanager.googleapis.com storage.googleapis.com
+
+      - name: Terraform state bucket'ı
+        if: inputs.action == 'apply'
+        run: |
+          if ! gcloud storage buckets describe "gs://${TF_STATE_BUCKET}" >/dev/null 2>&1; then
+            gcloud storage buckets create "gs://${TF_STATE_BUCKET}" --location="$REGION" \
+              --uniform-bucket-level-access --public-access-prevention
+          fi
+          gcloud storage buckets update "gs://${TF_STATE_BUCKET}" --versioning
+          echo "Bucket hazır: ${TF_STATE_BUCKET}"
+
+      - name: GitHub Actions service account'u ve rolleri
+        if: inputs.action == 'apply'
+        run: |
+          if ! gcloud iam service-accounts describe "$SA_EMAIL" >/dev/null 2>&1; then
+            gcloud iam service-accounts create "$SA_NAME" --display-name="NovaShop GitHub Actions"
+            sleep 10
+          fi
+          for ROLE in $ROLES; do
+            gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+              --member="serviceAccount:${SA_EMAIL}" --role="$ROLE" --condition=None --quiet >/dev/null
+            echo "Rol verildi: $ROLE"
+          done
+          gcloud storage buckets add-iam-policy-binding "gs://${TF_STATE_BUCKET}" \
+            --member="serviceAccount:${SA_EMAIL}" --role=roles/storage.objectAdmin >/dev/null
+          echo "Rol verildi: roles/storage.objectAdmin (state bucket)"
+
+      - name: Workload Identity pool ve GitHub OIDC provider
+        if: inputs.action == 'apply'
+        run: |
+          # Silinen pool/provider 30 gün DELETED durumunda kalır; varsa geri alınır
+          STATE=$(gcloud iam workload-identity-pools describe "$POOL_ID" --location=global --format='value(state)' 2>/dev/null || true)
+          if [ -z "$STATE" ]; then
+            gcloud iam workload-identity-pools create "$POOL_ID" --location=global --display-name="GitHub Actions"
+          elif [ "$STATE" = "DELETED" ]; then
+            gcloud iam workload-identity-pools undelete "$POOL_ID" --location=global
+          fi
+
+          STATE=$(gcloud iam workload-identity-pools providers describe "$PROVIDER_ID" --location=global \
+            --workload-identity-pool="$POOL_ID" --format='value(state)' 2>/dev/null || true)
+          if [ -z "$STATE" ]; then
+            gcloud iam workload-identity-pools providers create-oidc "$PROVIDER_ID" \
+              --location=global --workload-identity-pool="$POOL_ID" \
+              --display-name="GitHub OIDC" \
+              --issuer-uri="https://token.actions.githubusercontent.com" \
+              --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
+              --attribute-condition="assertion.repository == '${REPO}'"
+          elif [ "$STATE" = "DELETED" ]; then
+            gcloud iam workload-identity-pools providers undelete "$PROVIDER_ID" --location=global --workload-identity-pool="$POOL_ID"
+          fi
+
+          # Yalnızca bu repo service account'u kullanabilir
+          gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
+            --role=roles/iam.workloadIdentityUser \
+            --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.repository/${REPO}" >/dev/null
+          echo "WIF hazır."
+
+      - name: Sonuçları GitHub secret ve variable olarak yaz
+        if: inputs.action == 'apply'
+        run: |
+          gcloud iam workload-identity-pools providers describe "$PROVIDER_ID" --location=global \
+            --workload-identity-pool="$POOL_ID" --format='value(name)' | gh secret set GCP_WORKLOAD_IDENTITY_PROVIDER -R "$REPO"
+          printf '%s' "$SA_EMAIL" | gh secret set GCP_SERVICE_ACCOUNT -R "$REPO"
+          gh variable set TF_STATE_BUCKET -R "$REPO" --body "$TF_STATE_BUCKET"
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## GCP hazır
+          Yazılan secret'lar: \`GCP_WORKLOAD_IDENTITY_PROVIDER\`, \`GCP_SERVICE_ACCOUNT\`
+          Yazılan variable: \`TF_STATE_BUCKET\`
+
+          Sıradaki: **LAB-12 - 01 GKE Altyapısı (Terraform)** workflow'unu \`apply\` ile çalıştırın.
+          EOF
+
+      # ---------------- destroy ----------------
+      - name: Altyapının silindiğini kontrol et
+        if: inputs.action == 'destroy'
+        run: |
+          if gcloud container clusters describe "$CLUSTER_NAME" --zone "$ZONE" >/dev/null 2>&1; then
+            echo "::error::GKE cluster hâlâ var. Önce 'LAB-12 - 01 GKE Altyapısı (Terraform)' workflow'unu destroy ile çalıştırın."
+            exit 1
+          fi
+
+      - name: Hazırlık kaynaklarını sil
+        if: inputs.action == 'destroy'
+        run: |
+          for ROLE in $ROLES; do
+            gcloud projects remove-iam-policy-binding "$PROJECT_ID" \
+              --member="serviceAccount:${SA_EMAIL}" --role="$ROLE" --condition=None --quiet >/dev/null 2>&1 || true
+          done
+          gcloud iam service-accounts delete "$SA_EMAIL" --quiet 2>/dev/null || true
+          gcloud iam workload-identity-pools delete "$POOL_ID" --location=global --quiet 2>/dev/null || true
+          if gcloud storage buckets describe "gs://${TF_STATE_BUCKET}" >/dev/null 2>&1; then
+            gcloud storage rm --recursive "gs://${TF_STATE_BUCKET}"
+          fi
+          gh secret delete GCP_WORKLOAD_IDENTITY_PROVIDER -R "$REPO" || true
+          gh secret delete GCP_SERVICE_ACCOUNT -R "$REPO" || true
+          gh variable delete TF_STATE_BUCKET -R "$REPO" || true
+          echo "## GCP hazırlık kaynakları silindi" >> "$GITHUB_STEP_SUMMARY"

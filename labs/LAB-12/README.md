@@ -4,10 +4,11 @@
 
 NovaShop'u Google Cloud üzerinde çalıştırmak. Altyapı (VPC, GKE cluster, Artifact Registry) Terraform ile **yalnızca GitHub Actions içinden** kurulur ve silinir; uygulama Helm ile, monitoring/logging araçları kubectl ile yine Actions üzerinden dağıtılır. Actions GCP'ye anahtar dosyası olmadan, **Workload Identity Federation (WIF)** ile bağlanır.
 
-Akış üç workflow'dan oluşur:
+Akış dört workflow'dan oluşur; sırayla çalıştırılır:
 
 | Workflow | Dosya | Ne yapar |
 |---|---|---|
+| `LAB-12 - 00 GCP Hazırlık (Bootstrap)` | `.github/workflows/lab12-bootstrap.yml` | `apply`: API'ler, state bucket'ı, service account, WIF; sonuçları GitHub secret'larına yazar. `destroy`: bunları siler |
 | `LAB-12 - 01 GKE Altyapısı (Terraform)` | `.github/workflows/lab12-infra.yml` | `plan` / `apply` / `destroy`: VPC, GKE, Artifact Registry ve Traefik ingress controller |
 | `LAB-12 - 02 NovaShop GKE Uygulama Dağıtımı` | `.github/workflows/lab12-deploy.yml` | UI testleri, image build, Artifact Registry'ye push, Helm ile 5 mikroservis, smoke test |
 | `LAB-12 - 03 GKE Monitoring & Logging Dağıtımı` | `.github/workflows/lab12-monitoring.yml` | ELK 9, Prometheus, Grafana, ortak Ingress, Cloudflare DNS |
@@ -16,7 +17,7 @@ Akış üç workflow'dan oluşur:
 
 - Billing açık bir GCP projesi ve bu projede `Owner` yetkisi.
 - Bu reponun kendi GitHub hesabınızdaki kopyası (fork) ve repoda Settings erişimi.
-- Yerelde `gcloud` CLI ve `gh` CLI (`gh auth login` yapılmış). Lokal bağlantı adımı için `kubectl`.
+- Yerelde `gcloud` CLI (yalnızca bootstrap token'ı almak ve lokal bağlantı için) ve `kubectl`.
 - İsteğe bağlı: alan adı Cloudflare'de olan bir zone (DNS kayıtları için).
 
 ## Mimari ve Çalışma Modeli
@@ -34,8 +35,8 @@ flowchart LR
     U(["Tarayıcı / curl"]) -->|Cloudflare DNS| LB["Traefik LoadBalancer IP"] --> GKE
 ```
 
-- **Bir kerelik hazırlık** (yerelde gcloud ile): API'ler, Terraform state bucket'ı, GitHub Actions service account'u ve WIF. Bunlar olmadan Actions GCP'ye bağlanamaz, bu yüzden Terraform'un dışındadır.
-- **Geri kalan her şey** workflow'larla kurulur ve `01`'in `destroy` seçeneğiyle silinir.
+- **00 Bootstrap** bir kere çalışır: API'leri açar, Terraform state bucket'ını, GitHub Actions service account'unu ve WIF'i oluşturur, bulduğu değerleri `gh` ile repoya secret/variable olarak yazar. Bu adım sizin kısa ömürlü GCP token'ınızla çalışır; sonraki workflow'lar anahtarsız WIF kullanır.
+- **01, 02, 03** altyapıyı, uygulamayı ve monitoring'i kurar. İş bitince **01 destroy** altyapıyı, isterseniz **00 destroy** hazırlık kaynaklarını siler.
 
 <details>
 <summary><strong>Dizin yapısı</strong></summary>
@@ -101,77 +102,114 @@ resource "google_container_node_pool" "default" {
 
 ## Adım Adım Uygulama Rehberi
 
-### 1. Bir kerelik hazırlık (gcloud)
+### 1. GitHub'a girilecek secret ve variable'lar
 
-#### 1.1 Değişkenler
+Reponuzda **Settings > Secrets and variables > Actions** sayfasında girilir. Secret'lar **Secrets** sekmesinde **New repository secret** ile, variable'lar **Variables** sekmesinde **New repository variable** ile eklenir. Secret'lar loglarda maskelenir, variable'lar düz metindir.
 
-Aşağıdaki komutların hepsi bu değişkenleri kullanır. `<PROJE_ID>` ve `<GITHUB_KULLANICI>/<REPO>` yerine kendi değerlerinizi yazın, diğerlerini olduğu gibi bırakabilirsiniz:
+#### 1.1 Sizin girmeniz zorunlu olanlar
+
+| Tür | Ad | Ne | Nasıl alınır | Örnek |
+|---|---|---|---|---|
+| Secret | `GCP_BOOTSTRAP_TOKEN` | Bootstrap'in GCP'ye bağlanması için kısa ömürlü token (1 saat geçerli) | Yerelde `gcloud auth login`, ardından `gcloud auth print-access-token` çıktısı | `ya29.a0AfB...` |
+| Secret | `GH_PAT` | Bootstrap'in sonuçları repoya secret/variable olarak yazabilmesi için GitHub token'ı | GitHub > Settings > Developer settings > Personal access tokens > Fine-grained tokens > Generate new token. Repository access: bu repo. Permissions: **Secrets** ve **Variables** = Read and write | `github_pat_11A...` |
+| Variable | `GCP_PROJECT_ID` | GCP proje ID'si | Console'da üstteki proje seçici > ID sütunu | `my-project-123456` |
+
+#### 1.2 İsteğe bağlı olanlar
+
+Girilmezse varsayılan değer kullanılır; Cloudflare secret'ları yoksa DNS adımı uyarıyla atlanır ve uygulamaya IP üzerinden erişilir.
+
+| Tür | Ad | Ne | Varsayılan / örnek |
+|---|---|---|---|
+| Variable | `GCP_REGION` | Subnet ve Artifact Registry bölgesi | `europe-west1` |
+| Variable | `GCP_ZONE` | Zonal GKE cluster'ın zone'u | `europe-west1-b` |
+| Variable | `GKE_CLUSTER_NAME` | GKE cluster adı | `novashop-training-gke` |
+| Variable | `BASE_DOMAIN` | Uygulama ve monitoring alan adları için kök domain | `devopsatolyesi.com` |
+| Secret | `CLOUDFLARE_API_TOKEN` | DNS kayıtları için Cloudflare token'ı. Cloudflare > My Profile > API Tokens > Create Token > "Edit zone DNS" şablonu > Zone Resources: alan adınız | `Xy12...` |
+| Secret | `CLOUDFLARE_ZONE_ID` | Alan adının zone ID'si. Cloudflare > alan adınız > Overview > sağ sütundaki API bölümü > Zone ID | `0f1e2d3c...` |
+
+#### 1.3 Bootstrap'in girdikleri (elle girmeyin)
+
+| Tür | Ad | Ne |
+|---|---|---|
+| Secret | `GCP_WORKLOAD_IDENTITY_PROVIDER` | WIF provider'ının tam adı |
+| Secret | `GCP_SERVICE_ACCOUNT` | GitHub Actions service account'unun e-postası |
+| Variable | `TF_STATE_BUCKET` | Terraform state bucket'ı (`<PROJE_ID>-tfstate`) |
+
+Aynı değerleri `gh` CLI ile de girebilirsiniz. Komutları çalıştıracağınız terminalde repo adını tanımlayın; sonraki tüm `gh` komutları bu değişkeni kullanır:
 
 ```bash
-PROJECT_ID=<PROJE_ID>
 REPO=<GITHUB_KULLANICI>/<REPO>
-REGION=europe-west1
-ZONE=europe-west1-b
-CLUSTER_NAME=novashop-training-gke
-SA_NAME=novashop-github
-POOL_ID=github-pool
-PROVIDER_ID=github-provider
-TF_STATE_BUCKET=${PROJECT_ID}-tfstate
-SA_EMAIL=${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com
 ```
 
-#### 1.2 Oturum, proje ve API'ler
-
-GCP'ye giriş yapın ve projeyi seçin:
+GCP token'ını alıp secret olarak girin (değer ekrana yazılmaz):
 
 ```bash
 gcloud auth login
-gcloud config set project "$PROJECT_ID"
+gcloud auth print-access-token | gh secret set GCP_BOOTSTRAP_TOKEN -R "$REPO"
 ```
 
-Terraform ve workflow'ların kullandığı API'leri açın (1-2 dakika sürer):
+GitHub token'ını girin (komut değeri sorar, yapıştırıp Enter'a basın):
 
 ```bash
-gcloud services enable compute.googleapis.com container.googleapis.com \
-  artifactregistry.googleapis.com iam.googleapis.com iamcredentials.googleapis.com \
-  sts.googleapis.com cloudresourcemanager.googleapis.com storage.googleapis.com
+gh secret set GH_PAT -R "$REPO"
 ```
 
-*Beklenen çıktı:* `Operation "operations/..." finished successfully.`
-
-#### 1.3 Terraform state bucket'ı
-
-Terraform state'i için bucket oluşturun; ad tüm GCS içinde benzersiz olmalıdır:
+Cloudflare kullanacaksanız token ve zone ID'yi girin:
 
 ```bash
-gcloud storage buckets create "gs://${TF_STATE_BUCKET}" --location="$REGION" \
-  --uniform-bucket-level-access --public-access-prevention
+gh secret set CLOUDFLARE_API_TOKEN -R "$REPO"
+gh secret set CLOUDFLARE_ZONE_ID -R "$REPO"
 ```
 
-State'in eski sürümleri saklansın diye versioning açın:
+Proje ID'sini girin:
 
 ```bash
-gcloud storage buckets update "gs://${TF_STATE_BUCKET}" --versioning
+gh variable set GCP_PROJECT_ID -R "$REPO" --body "<PROJE_ID>"
 ```
 
-#### 1.4 GitHub Actions service account'u ve rolleri
-
-Workflow'ların kullanacağı service account'u oluşturun:
+İsteğe bağlı variable'ları varsayılandan farklı kullanacaksanız girin:
 
 ```bash
-gcloud iam service-accounts create "$SA_NAME" --display-name="NovaShop GitHub Actions"
+gh variable set GCP_REGION       -R "$REPO" --body "europe-west1"
+gh variable set GCP_ZONE         -R "$REPO" --body "europe-west1-b"
+gh variable set GKE_CLUSTER_NAME -R "$REPO" --body "novashop-training-gke"
+gh variable set BASE_DOMAIN      -R "$REPO" --body "devopsatolyesi.com"
 ```
 
-Altyapıyı kurup silebilmesi ve deploy edebilmesi için proje rollerini verin:
+### 2. GCP hazırlığı: 00 Bootstrap
+
+**Actions > LAB-12 - 00 GCP Hazırlık (Bootstrap) > Run workflow** ile `action: apply` seçin ya da:
 
 ```bash
-for ROLE in roles/container.admin roles/compute.networkAdmin roles/artifactregistry.admin \
-            roles/iam.serviceAccountAdmin roles/iam.serviceAccountUser \
-            roles/resourcemanager.projectIamAdmin; do
-  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-    --member="serviceAccount:${SA_EMAIL}" --role="$ROLE" --condition=None --quiet >/dev/null
-done
+gh workflow run lab12-bootstrap.yml -R "$REPO" -f action=apply
 ```
+
+Koşuyu takip edin (yaklaşık 2 dakika); yeşil bitmelidir:
+
+```bash
+gh run watch -R "$REPO" $(gh run list -R "$REPO" -w lab12-bootstrap.yml -L 1 --json databaseId --jq '.[0].databaseId')
+```
+
+Bootstrap'in yazdığı secret ve variable'ları kontrol edin (değerler gösterilmez):
+
+```bash
+gh secret list -R "$REPO" && gh variable list -R "$REPO"
+```
+
+*Beklenen:* listede `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_SERVICE_ACCOUNT` ve `TF_STATE_BUCKET` görünür.
+
+<details>
+<summary><strong>00 workflow'unun adımları</strong></summary>
+
+| Adım | Ne yapar |
+|---|---|
+| Ön tanımları kontrol et | `GCP_PROJECT_ID`, `GCP_BOOTSTRAP_TOKEN`, `GH_PAT` tanımlı mı bakar; token'ı gcloud'a verir |
+| GCP erişimini doğrula | Token geçerli mi, projeye erişiliyor mu kontrol eder |
+| API'leri aç | compute, container, artifactregistry, iam, iamcredentials, sts, cloudresourcemanager, storage |
+| Terraform state bucket'ı | `<PROJE_ID>-tfstate` bucket'ı (versioning açık, public erişim kapalı) |
+| Service account ve roller | `novashop-github` service account'u ve aşağıdaki roller |
+| Workload Identity pool ve provider | `github-pool` ve GitHub OIDC provider'ı; yalnızca bu reponun token'larını kabul eder |
+| Sonuçları GitHub'a yaz | `gh secret set` / `gh variable set` ile üç değeri repoya yazar |
 
 | Rol | Neden |
 |---|---|
@@ -181,98 +219,19 @@ done
 | `roles/iam.serviceAccountAdmin` | Node'lar için ayrı service account oluşturmak |
 | `roles/iam.serviceAccountUser` | Node pool'a bu service account'u atamak |
 | `roles/resourcemanager.projectIamAdmin` | Node service account'una log/metrik/image okuma rolleri vermek |
+| `roles/storage.objectAdmin` (yalnızca state bucket'ında) | Terraform state'ini okuyup yazmak |
 
-State bucket'ına okuma/yazma yetkisi verin (yalnızca bu bucket):
-
-```bash
-gcloud storage buckets add-iam-policy-binding "gs://${TF_STATE_BUCKET}" \
-  --member="serviceAccount:${SA_EMAIL}" --role=roles/storage.objectAdmin
-```
-
-#### 1.5 Workload Identity Federation
-
-GitHub Actions token'larını kabul edecek pool'u oluşturun:
-
-```bash
-gcloud iam workload-identity-pools create "$POOL_ID" --location=global \
-  --display-name="GitHub Actions"
-```
-
-GitHub OIDC provider'ını ekleyin. `--attribute-condition` yalnızca sizin reponuzdan gelen token'ları kabul eder:
+GitHub OIDC provider'ı (kritik kısım `--attribute-condition`):
 
 ```bash
 gcloud iam workload-identity-pools providers create-oidc "$PROVIDER_ID" \
   --location=global --workload-identity-pool="$POOL_ID" \
-  --display-name="GitHub OIDC" \
   --issuer-uri="https://token.actions.githubusercontent.com" \
   --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
   --attribute-condition="assertion.repository == '${REPO}'"
 ```
 
-Reponuzun service account'u kullanabilmesi için `roles/iam.workloadIdentityUser` bağlayın:
-
-```bash
-PROJECT_NUMBER=$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')
-gcloud iam service-accounts add-iam-policy-binding "$SA_EMAIL" \
-  --role=roles/iam.workloadIdentityUser \
-  --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.repository/${REPO}"
-```
-
-### 2. GitHub secret ve variable'ları
-
-Secret'lar loglarda maskelenir; variable'lar düz metindir. Değerler 1. adımdaki değişkenlerden gelir:
-
-| Tür | Ad | Değer nereden gelir |
-|---|---|---|
-| Secret | `GCP_WORKLOAD_IDENTITY_PROVIDER` | `gcloud iam workload-identity-pools providers describe "$PROVIDER_ID" --location=global --workload-identity-pool="$POOL_ID" --format='value(name)'` |
-| Secret | `GCP_SERVICE_ACCOUNT` | `echo "$SA_EMAIL"` |
-| Secret (isteğe bağlı) | `CLOUDFLARE_API_TOKEN` | Cloudflare > My Profile > API Tokens > Create Token > "Edit zone DNS" şablonu > Zone Resources: alan adınız |
-| Secret (isteğe bağlı) | `CLOUDFLARE_ZONE_ID` | Cloudflare > alan adınız > Overview > sağ sütundaki API bölümü > Zone ID |
-| Variable | `GCP_PROJECT_ID` | `echo "$PROJECT_ID"` |
-| Variable | `GCP_REGION` | `echo "$REGION"` |
-| Variable | `GCP_ZONE` | `echo "$ZONE"` |
-| Variable | `GKE_CLUSTER_NAME` | `echo "$CLUSTER_NAME"` |
-| Variable | `TF_STATE_BUCKET` | `echo "$TF_STATE_BUCKET"` |
-| Variable | `BASE_DOMAIN` | Alan adınız (varsayılan `devopsatolyesi.com`) |
-
-**gh CLI ile** (1. adımdaki terminalde). Secret değerleri ekrana yazılmadan doğrudan GitHub'a gider:
-
-```bash
-gcloud iam workload-identity-pools providers describe "$PROVIDER_ID" --location=global \
-  --workload-identity-pool="$POOL_ID" --format='value(name)' | gh secret set GCP_WORKLOAD_IDENTITY_PROVIDER -R "$REPO"
-printf '%s' "$SA_EMAIL" | gh secret set GCP_SERVICE_ACCOUNT -R "$REPO"
-gh variable set GCP_PROJECT_ID   -R "$REPO" --body "$PROJECT_ID"
-gh variable set GCP_REGION       -R "$REPO" --body "$REGION"
-gh variable set GCP_ZONE         -R "$REPO" --body "$ZONE"
-gh variable set GKE_CLUSTER_NAME -R "$REPO" --body "$CLUSTER_NAME"
-gh variable set TF_STATE_BUCKET  -R "$REPO" --body "$TF_STATE_BUCKET"
-gh variable set BASE_DOMAIN      -R "$REPO" --body "devopsatolyesi.com"
-```
-
-Cloudflare kullanacaksanız token ve zone ID'yi girin (komut değeri sorar, yapıştırıp Enter'a basın):
-
-```bash
-gh secret set CLOUDFLARE_API_TOKEN -R "$REPO"
-gh secret set CLOUDFLARE_ZONE_ID -R "$REPO"
-```
-
-Girilen adları kontrol edin (değerler gösterilmez):
-
-```bash
-gh secret list -R "$REPO" && gh variable list -R "$REPO"
-```
-
-**GitHub arayüzü ile:**
-
-1. Reponuzda **Settings**'e, sol menüde **Secrets and variables > Actions**'a tıklayın.
-2. **Secrets** sekmesinde **New repository secret**: **Name** alanına tablodaki adı, **Secret** alanına değeri yazıp **Add secret**'a tıklayın.
-3. **Variables** sekmesinde **New repository variable**: **Name** ve **Value** alanlarını doldurup **Add variable**'a tıklayın.
-
-![Settings > Secrets and variables > Actions](images/01-actions-secrets.png)
-
-![New repository secret](images/02-new-secret.png)
-
-![Variables sekmesi](images/03-variables.png)
+</details>
 
 ### 3. Altyapıyı kurma: 01 apply
 
@@ -418,7 +377,7 @@ GCP hesabınızla giriş yapın ve projeyi seçin:
 
 ```bash
 gcloud auth login
-gcloud config set project "$PROJECT_ID"
+gcloud config set project <PROJE_ID>
 ```
 
 `kubectl`'in GKE'ye kimlik doğrulaması için gereken eklentiyi kurun:
@@ -430,7 +389,7 @@ gcloud components install gke-gcloud-auth-plugin kubectl
 Cluster bilgilerini `~/.kube/config`'e yazın:
 
 ```bash
-gcloud container clusters get-credentials "$CLUSTER_NAME" --zone "$ZONE"
+gcloud container clusters get-credentials novashop-training-gke --zone europe-west1-b
 ```
 
 *Beklenen çıktı:* `kubeconfig entry generated for novashop-training-gke.`
@@ -477,23 +436,11 @@ gh run watch -R "$REPO" $(gh run list -R "$REPO" -w lab12-infra.yml -L 1 --json 
 gcloud container clusters list
 ```
 
-Lab'ı tamamen bitirdiyseniz bir kerelik hazırlık kaynaklarını da silin (1. adımdaki değişkenler tanımlı olmalı). Önce proje rollerini kaldırın:
+Lab'ı tamamen bitirdiyseniz hazırlık kaynaklarını (service account, WIF pool, state bucket ve bootstrap'in yazdığı secret'lar) da silin. `GCP_BOOTSTRAP_TOKEN` süresi dolduysa önce yenileyin:
 
 ```bash
-for ROLE in roles/container.admin roles/compute.networkAdmin roles/artifactregistry.admin \
-            roles/iam.serviceAccountAdmin roles/iam.serviceAccountUser \
-            roles/resourcemanager.projectIamAdmin; do
-  gcloud projects remove-iam-policy-binding "$PROJECT_ID" \
-    --member="serviceAccount:${SA_EMAIL}" --role="$ROLE" --condition=None --quiet >/dev/null
-done
+gcloud auth print-access-token | gh secret set GCP_BOOTSTRAP_TOKEN -R "$REPO"
+gh workflow run lab12-bootstrap.yml -R "$REPO" -f action=destroy
 ```
 
-Service account'u, WIF pool'unu ve state bucket'ını silin:
-
-```bash
-gcloud iam service-accounts delete "$SA_EMAIL" --quiet
-gcloud iam workload-identity-pools delete "$POOL_ID" --location=global --quiet
-gcloud storage rm --recursive "gs://${TF_STATE_BUCKET}"
-```
-
-Silinen WIF pool'u 30 gün boyunca aynı adla yeniden oluşturulamaz; lab'ı bu süre içinde tekrar kuracaksanız `POOL_ID` için farklı bir ad kullanın.
+Silinen WIF pool'u 30 gün boyunca `DELETED` durumunda kalır; bu süre içinde bootstrap tekrar çalıştırılırsa pool geri alınarak kullanılır.

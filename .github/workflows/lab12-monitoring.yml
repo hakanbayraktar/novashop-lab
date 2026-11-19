@@ -23,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: gke-training
     env:
-      GCP_ZONE: ${{ vars.GCP_ZONE }}
+      GCP_ZONE: ${{ vars.GCP_ZONE || 'europe-west1-b' }}
       CLUSTER_NAME: ${{ vars.GKE_CLUSTER_NAME || 'novashop-training-gke' }}
       BASE_DOMAIN: ${{ vars.BASE_DOMAIN || 'devopsatolyesi.com' }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
