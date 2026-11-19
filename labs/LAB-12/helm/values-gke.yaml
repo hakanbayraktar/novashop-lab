@@ -43,7 +43,7 @@ ingress:
   className: traefik
   annotations: {}
   hosts:
-    - host: "novashop.devopsatolyesi.com"
+    - host: "novashop1.devopsatolyesi.com"
       paths:
         - path: /
           pathType: Prefix

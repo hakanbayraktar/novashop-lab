@@ -108,7 +108,7 @@ jobs:
           API="https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/dns_records"
           cf() { curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" "$@"; }
 
-          DOMAINS=("novashop" "elk" "grafana" "prometheus")
+          DOMAINS=("novashop1" "elk1" "grafana1" "prometheus1")
           echo "Cloudflare DNS kayıtları güncelleniyor -> $LB_IP"
 
           for sub in "${DOMAINS[@]}"; do
@@ -139,14 +139,14 @@ jobs:
       - name: Smoke test
         if: inputs.action == 'apply'
         run: |
-          curl -fsS --retry 10 --retry-delay 10 --retry-all-errors -H "Host: novashop.$BASE_DOMAIN" "http://$LB_IP/actuator/health"; echo
-          for sub in grafana prometheus elk; do
+          curl -fsS --retry 10 --retry-delay 10 --retry-all-errors -H "Host: novashop1.$BASE_DOMAIN" "http://$LB_IP/actuator/health"; echo
+          for sub in grafana1 prometheus1 elk1; do
             CODE=$(curl -s -o /dev/null -w "%{http_code}" --retry 10 --retry-delay 10 --retry-all-errors -H "Host: $sub.$BASE_DOMAIN" "http://$LB_IP/")
             echo "$sub.$BASE_DOMAIN -> HTTP $CODE"
             case "$CODE" in 200|302) ;; *) exit 1 ;; esac
           done
           if [ "${CF_DNS:-}" = true ]; then
-            curl -fsS --retry 10 --retry-delay 10 --retry-all-errors "https://novashop.$BASE_DOMAIN/actuator/health"; echo
+            curl -fsS --retry 10 --retry-delay 10 --retry-all-errors "https://novashop1.$BASE_DOMAIN/actuator/health"; echo
           fi
 
       - name: Özet ve Erişim Linkleri
@@ -156,10 +156,10 @@ jobs:
           ## NovaShop GKE Monitoring ve Logging Dağıtımı Tamamlandı
 
           ### Servis Erişim Linkleri:
-          - **NovaShop Uygulaması:** [https://novashop.$BASE_DOMAIN](https://novashop.$BASE_DOMAIN)
-          - **Kibana (ELK 9):** [https://elk.$BASE_DOMAIN](https://elk.$BASE_DOMAIN)
-          - **Grafana Paneli:** [https://grafana.$BASE_DOMAIN](https://grafana.$BASE_DOMAIN) (Kullanıcı: \`admin\` / Şifre: \`devops2026\`)
-          - **Prometheus:** [https://prometheus.$BASE_DOMAIN](https://prometheus.$BASE_DOMAIN)
+          - **NovaShop Uygulaması:** [https://novashop1.$BASE_DOMAIN](https://novashop1.$BASE_DOMAIN)
+          - **Kibana (ELK 9):** [https://elk1.$BASE_DOMAIN](https://elk1.$BASE_DOMAIN)
+          - **Grafana Paneli:** [https://grafana1.$BASE_DOMAIN](https://grafana1.$BASE_DOMAIN) (Kullanıcı: \`admin\` / Şifre: \`devops2026\`)
+          - **Prometheus:** [https://prometheus1.$BASE_DOMAIN](https://prometheus1.$BASE_DOMAIN)
 
           ### Load Balancer IP Adresi:
           - \`http://$LB_IP\`

@@ -22,7 +22,7 @@ jobs:
       CLUSTER_NAME: ${{ vars.GKE_CLUSTER_NAME || 'novashop-training-gke' }}
       GAR_REPOSITORY: novashop
       IMAGE_NAME: novashop-ui
-      APP_HOST: novashop.${{ vars.BASE_DOMAIN || 'devopsatolyesi.com' }}
+      APP_HOST: novashop1.${{ vars.BASE_DOMAIN || 'devopsatolyesi.com' }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-java@v6

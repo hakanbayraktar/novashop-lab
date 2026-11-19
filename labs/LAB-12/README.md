@@ -297,7 +297,7 @@ gh run watch -R "$REPO" $(gh run list -R "$REPO" -w lab12-deploy.yml -L 1 --json
 | UI image derle ve gönder | `novashop-ui:sha-<commit>` image'ını Artifact Registry'ye push eder |
 | Traefik kontrol et / kur | Traefik yoksa kurar |
 | Helm ile dağıt | `charts/novashop` + `labs/LAB-12/helm/values-gke.yaml`; ui, catalog, cart, orders, checkout |
-| Smoke test | Ingress IP'sine `Host: novashop.<BASE_DOMAIN>` başlığıyla `/actuator/health` ve ana sayfa isteği |
+| Smoke test | Ingress IP'sine `Host: novashop1.<BASE_DOMAIN>` başlığıyla `/actuator/health` ve ana sayfa isteği |
 
 Helm komutu:
 
@@ -335,7 +335,7 @@ gh run watch -R "$REPO" $(gh run list -R "$REPO" -w lab12-monitoring.yml -L 1 --
 | Bileşenleri kur | `labs/LAB-12/monitoring/00-07`: Elasticsearch, Kibana, Logstash, Fluent Bit, Prometheus, Grafana ve ortak Ingress |
 | Kibana Data View | `k8s-logs-*` veri görünümünü oluşturur |
 | Load balancer IP adresini bekle | Traefik servisinin dış IP'sini alır |
-| Cloudflare DNS | `novashop`, `elk`, `grafana`, `prometheus` için proxied A kaydı açar/günceller; secret yoksa uyarıyla atlar |
+| Cloudflare DNS | `novashop1`, `elk1`, `grafana1`, `prometheus1` için proxied A kaydı açar/günceller; secret yoksa uyarıyla atlar |
 | Smoke test | Her host'a load balancer IP'si üzerinden istek atar |
 
 </details>
@@ -345,7 +345,7 @@ gh run watch -R "$REPO" $(gh run list -R "$REPO" -w lab12-monitoring.yml -L 1 --
 Workflow özetindeki (Summary) load balancer IP'sini alın ve uygulamayı `Host` başlığıyla sorgulayın:
 
 ```bash
-curl -s -H "Host: novashop.devopsatolyesi.com" http://<LB_IP>/actuator/health
+curl -s -H "Host: novashop1.devopsatolyesi.com" http://<LB_IP>/actuator/health
 ```
 
 *Beklenen çıktı:* `{"status":"UP","groups":["liveness","readiness"]}`
@@ -353,15 +353,15 @@ curl -s -H "Host: novashop.devopsatolyesi.com" http://<LB_IP>/actuator/health
 Cloudflare secret'ları girildiyse alan adı üzerinden:
 
 ```bash
-curl -s https://novashop.devopsatolyesi.com/actuator/health
+curl -s https://novashop1.devopsatolyesi.com/actuator/health
 ```
 
 | Servis | Adres | Kullanıcı / Şifre |
 |---|---|---|
-| NovaShop | `https://novashop.<BASE_DOMAIN>` | - |
-| Grafana | `https://grafana.<BASE_DOMAIN>` | `admin` / `devops2026` |
-| Kibana | `https://elk.<BASE_DOMAIN>` | - |
-| Prometheus | `https://prometheus.<BASE_DOMAIN>` | - |
+| NovaShop | `https://novashop1.<BASE_DOMAIN>` | - |
+| Grafana | `https://grafana1.<BASE_DOMAIN>` | `admin` / `devops2026` |
+| Kibana | `https://elk1.<BASE_DOMAIN>` | - |
+| Prometheus | `https://prometheus1.<BASE_DOMAIN>` | - |
 
 ### 7. Lokalden GKE'ye bağlanma
 
@@ -412,7 +412,7 @@ Load balancer IP'sini alın ve uygulamaya erişin:
 
 ```bash
 LB_IP=$(kubectl get svc traefik -n traefik -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-curl -s -H "Host: novashop.devopsatolyesi.com" "http://${LB_IP}/actuator/health"
+curl -s -H "Host: novashop1.devopsatolyesi.com" "http://${LB_IP}/actuator/health"
 ```
 
 DNS olmadan tarayıcıdan açmak için uygulamayı lokal porta yönlendirin ve http://localhost:8080 adresini açın:
