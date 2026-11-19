@@ -124,7 +124,7 @@ Tablodaki her bağlantı adım adım kurulum ve uygulama kılavuzunu içerir. Sa
 | **[LAB-09*](labs/LAB-09/README.md)** | Argo CD ve GitOps uzlaştırması | `bash scripts/verify/verify-lab-09.sh` |
 | **[LAB-10*](labs/LAB-10/README.md)** | Prometheus, Grafana, OTel, Jaeger ve Alertmanager | `bash scripts/compose-observability.sh up`; `bash scripts/verify/verify-lab-10.sh` |
 | **[LAB-11*](labs/LAB-11/README.md)** | Merkezi loglama (ELK Stack): Fluent Bit, Elasticsearch ve Kibana | `bash scripts/verify/verify-lab-11.sh` |
-| **[LAB-12*](labs/LAB-12/README.md)** | Terraform modülleri, remote S3 state ve DynamoDB locking | `bash scripts/verify/verify-lab-12.sh` |
+| **[LAB-12*](labs/LAB-12/README.md)** | Terraform ile GKE, GCS state, GitHub Actions + Workload Identity Federation | `terraform -chdir=labs/LAB-12/terraform plan` |
 | [LAB-13](labs/LAB-13/README.md) | EKS, IRSA ve AWS Load Balancer Controller | `bash scripts/verify/verify-lab-13.sh` |
 | [LAB-14](labs/LAB-14/README.md) | ECS Fargate, ALB ve CI/CD | `bash scripts/verify/verify-lab-14.sh` |
 

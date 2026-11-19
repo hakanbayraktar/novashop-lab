@@ -12,7 +12,8 @@ Tüm laboratuvarlar **Ubuntu sunucusu** üzerinde koşar ve iki erişim modelini
 > **Çalışma ve Ortam Kılavuzu:**
 > - **Çekirdek Laboratuvarlar (`*` işaretli):** Platformun omurgasını oluşturan temel modüllerdir.
 > - **Yerel Ortam Laboratuvarları (`LAB-00`, `LAB-01`, `LAB-03`, `LAB-06`, `LAB-07`, `LAB-08`, `LAB-09`, `LAB-10`, `LAB-11`):** Harici bulut hesabı gerektirmez; yerel Docker motoru, Kind Kubernetes kümesi ve sistem araçları üzerinde koşar.
-> - **AWS Cloud Laboratuvarları (`LAB-02`, `LAB-04`, `LAB-05`, `LAB-12`, `LAB-13`, `LAB-14`):** Canlı AWS hesabı, IAM API anahtarları veya AWS kredisi gerektirir.
+> - **AWS Cloud Laboratuvarları (`LAB-02`, `LAB-04`, `LAB-05`, `LAB-13`, `LAB-14`):** Canlı AWS hesabı, IAM API anahtarları veya AWS kredisi gerektirir.
+> - **GCP Laboratuvarı (`LAB-12`):** Billing açık bir GCP projesi gerektirir.
 > - **Bellek ve Kaynak Yönetimi:** Sunucu kaynaklarını korumak için bağımlı olmayan profilleri tamamlandığında durdurunuz (`docker compose stop`). `LAB-11` (ELK) öncesinde önceki ağır servisleri kapatmanız önerilir.
 > - **Port Eşleme Standardı:** NovaShop Storefront UI kurumsal platform matrisinde `19001` (App1 slotu) ve `8888` (yerel) portlarından yayınlanır; Kind üzerinde ise NodePort `30080` ile sunulur.
 
@@ -30,7 +31,7 @@ Tüm laboratuvarlar **Ubuntu sunucusu** üzerinde koşar ve iki erişim modelini
 | **09** | **[LAB-09*](LAB-09/README.md)** | GitOps & Argo CD | Declarative GitOps, continuous reconciliation, self-healing, automated sync | [LAB-09 Rehberi](LAB-09/README.md) |
 | **10** | **[LAB-10*](LAB-10/README.md)** | Observability & İzleme | Prometheus metrikleri, Grafana panoları, OpenTelemetry / Jaeger trace, SLO yönetimi | [LAB-10 Rehberi](LAB-10/README.md) |
 | **11** | **[LAB-11*](LAB-11/README.md)** | Merkezi Loglama (ELK Stack) | Fluent Bit, Elasticsearch, Kibana; Docker mikroservisleri, K8s podları ve host logları | [LAB-11 Rehberi](LAB-11/README.md) |
-| **12** | **[LAB-12*](LAB-12/README.md)** | Terraform IaC (Altyapı Kod Olarak) | Modüler Terraform, AWS EC2, RDS MySQL, Cloud-Init, plan/apply/idempotency | [LAB-12 Rehberi](LAB-12/README.md) |
+| **12** | **[LAB-12*](LAB-12/README.md)** | Terraform ile GKE ve GitHub Actions | Modüler Terraform, GKE, Artifact Registry, Workload Identity Federation, GCS state | [LAB-12 Rehberi](LAB-12/README.md) |
 | **13** | [LAB-13](LAB-13/README.md) | Kurumsal Amazon EKS | Managed NodeGroups, eksctl, IRSA IAM rolleri, AWS Load Balancer Controller | [LAB-13 Rehberi](LAB-13/README.md) |
 | **14** | [LAB-14](LAB-14/README.md) | Amazon ECS Fargate | Serverless konteynerler, ALB, CloudWatch Container Insights, Blue/Green CI/CD | [LAB-14 Rehberi](LAB-14/README.md) |
 
