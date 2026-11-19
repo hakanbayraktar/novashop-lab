@@ -141,11 +141,32 @@ Aynı değerleri `gh` CLI ile de girebilirsiniz. Komutları çalıştıracağın
 REPO=<GITHUB_KULLANICI>/<REPO>
 ```
 
-GCP kimlik dosyasını oluşturup secret olarak girin (tarayıcıda Owner yetkili hesapla giriş yapın; değer ekrana yazılmaz):
+**`GCP_BOOTSTRAP_CREDENTIALS`**: Bootstrap'in GCP'ye bağlanacağı kimlik dosyasını oluşturun. Komut tarayıcıyı açar; projede Owner yetkisi olan hesapla giriş yapın:
 
 ```bash
 gcloud auth application-default login
+```
+
+*Beklenen çıktı:*
+
+```text
+Credentials saved to file: [/Users/<KULLANICI>/.config/gcloud/application_default_credentials.json]
+
+These credentials will be used by any library that requests Application Default Credentials (ADC).
+```
+
+Oluşan dosyanın içeriğini secret olarak GitHub'a gönderin (içerik ekrana yazılmaz):
+
+```bash
 gh secret set GCP_BOOTSTRAP_CREDENTIALS -R "$REPO" < ~/.config/gcloud/application_default_credentials.json
+```
+
+*Beklenen çıktı:* `✓ Set Actions secret GCP_BOOTSTRAP_CREDENTIALS for <GITHUB_KULLANICI>/<REPO>`
+
+Arayüzden girmek isterseniz dosya içeriğini panoya kopyalayın (macOS) ve **Secrets** sekmesinde **New repository secret** ile `GCP_BOOTSTRAP_CREDENTIALS` adıyla yapıştırın:
+
+```bash
+pbcopy < ~/.config/gcloud/application_default_credentials.json
 ```
 
 GitHub token'ını girin (komut değeri sorar, yapıştırıp Enter'a basın):
